@@ -47,24 +47,61 @@ import carla
 # where `game_loop(args)` is your existing function.
 
 # For now, stub:
-def game_loop(args):
-    print(">>> Running manual control (stub). Replace with your existing code.")
-    time.sleep(5)
-
+# def game_loop(args):
+#     print(">>> Running manual control (stub). Replace with your existing code.")
+#     time.sleep(5)
 
 # ==============================================================================
-# -- Auto mode helpers ---------------------------------------------------------
+# -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
 
 def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
+    """Spawn a pothole by sinking a cube below the ground surface"""
     cube_bp = bp_lib.find("static.prop.cube")
     cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
     if pothole:
-        pothole.set_simulate_physics(True)
+        pothole.set_simulate_physics(False)
         print(f"Spawned pothole at {location}")
     return pothole
+
+
+# ==============================================================================
+# -- Sensors -------------------------------------------------------------------
+# ==============================================================================
+
+def attach_collision_sensor(world, vehicle):
+    blueprint = world.get_blueprint_library().find('sensor.other.collision')
+    sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
+
+    def on_collision(event):
+        other = event.other_actor.type_id
+        impulse = event.normal_impulse
+        intensity = (impulse.x**2 + impulse.y**2 + impulse.z**2) ** 0.5
+        print(f"[COLLISION] with {other} | intensity={intensity:.2f}")
+
+    sensor.listen(on_collision)
+    return sensor
+
+
+def attach_imu_sensor(world, vehicle):
+    blueprint = world.get_blueprint_library().find('sensor.other.imu')
+    sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
+
+    def on_imu(event):
+        accel = event.accelerometer
+        gyro = event.gyroscope
+        print(f"[IMU] accel=({accel.x:.2f},{accel.y:.2f},{accel.z:.2f}) "
+              f"gyro=({gyro.x:.2f},{gyro.y:.2f},{gyro.z:.2f})")
+
+    sensor.listen(on_imu)
+    return sensor
+
+
+# ==============================================================================
+# -- Main autopilot + pothole routine ------------------------------------------
+# ==============================================================================
 
 def run_auto_mode():
     client = carla.Client("localhost", 2000)
@@ -77,10 +114,10 @@ def run_auto_mode():
     vehicle_bp = random.choice(bp_lib.filter("vehicle.*"))
     vehicle = world.try_spawn_actor(vehicle_bp, spawn_point)
     if not vehicle:
-        print("Failed to spawn vehicle")
+        print("❌ Failed to spawn vehicle")
         return
 
-    print(f"Spawned vehicle {vehicle.type_id} at {spawn_point.location}")
+    print(f"✅ Spawned vehicle {vehicle.type_id} at {spawn_point.location}")
 
     # Camera above vehicle
     spectator = world.get_spectator()
@@ -89,34 +126,44 @@ def run_auto_mode():
         carla.Rotation(pitch=-90)
     ))
 
+    # Attach sensors
+    collision_sensor = attach_collision_sensor(world, vehicle)
+    imu_sensor = attach_imu_sensor(world, vehicle)
+
     # Spawn potholes ahead
     potholes = []
     for i in range(5):
         loc = carla.Location(
             x=spawn_point.location.x + (i+1)*10.0,
             y=spawn_point.location.y,
-            z=spawn_point.location.z + 0.05
+            z=spawn_point.location.z - 0.2   # sink below road surface
         )
         pothole = spawn_pothole(world, bp_lib, loc)
         if pothole:
             potholes.append(pothole)
 
+    # Start autopilot
     vehicle.set_autopilot(True)
 
-    print("Running autopilot for 20s...")
+    print("🚗 Running autopilot for 20 seconds...")
     time.sleep(20)
 
-    print("Cleaning up...")
+    # Cleanup
+    print("🧹 Cleaning up actors...")
+    collision_sensor.destroy()
+    imu_sensor.destroy()
     vehicle.destroy()
     for p in potholes:
         p.destroy()
 
+    print("✅ Done.")
 
 # ==============================================================================
 # -- main() --------------------------------------------------------------------
 # ==============================================================================
 
 def main():
+    run_auto_mode()
     argparser = argparse.ArgumentParser(
         description='CARLA Manual Control Client')
     argparser.add_argument(
