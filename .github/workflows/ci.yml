@@ -2,16 +2,17 @@ name: Python CI
 
 on:
   push:
-    branches: [ "**" ]       
+    branches: [ "**" ]          # run on all branches
   pull_request:
-    branches: [ "**" ]  
+    branches: [ "**" ]          # run on PRs targeting any branch
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     env:
-      ENABLE_COVERAGE: false   # set to "true" to enable coverage + upload
+      # Default toggle: set to "true" to enable coverage
+      ENABLE_COVERAGE: ${{ vars.ENABLE_COVERAGE || 'false' }}
 
     steps:
       - name: Checkout repository
@@ -37,8 +38,9 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
-        if: env.ENABLE_COVERAGE == 'true'
+        if: ${{ env.ENABLE_COVERAGE == 'true' }}
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
           fail_ci_if_error: true
+
