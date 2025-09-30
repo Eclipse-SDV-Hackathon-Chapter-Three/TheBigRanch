@@ -44,14 +44,13 @@ import carla
 # -- Zenoh Init ----------------------------------------------------------------
 # ==============================================================================
 session = zenoh.open(zenoh.Config())
+pose_pub = session.declare_publisher("vehicle/pose")
 imu_pub = session.declare_publisher("vehicle/imu/raw")
-pothole_pub = session.declare_publisher("detect/pothole/event")
 
 # ==============================================================================
 # -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
 def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
-    # Spawn a cube prop for physics bump
     cube_bp = bp_lib.find("static.prop.cube")
     cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
     transform = carla.Transform(location, carla.Rotation())
@@ -61,7 +60,7 @@ def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
         pothole.set_simulate_physics(False)
         print(f"Spawned pothole at {location}")
 
-        # Draw debug outline (half-size extents!)
+        # Debug outline
         world.debug.draw_box(
             carla.BoundingBox(location,
                               carla.Vector3D(scale[0]/2, scale[1]/2, scale[2]/2)),
@@ -76,62 +75,63 @@ def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
 # ==============================================================================
 # -- Sensors -------------------------------------------------------------------
 # ==============================================================================
-def attach_collision_sensor(world, vehicle):
-    blueprint = world.get_blueprint_library().find('sensor.other.collision')
-    sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
-
-    def on_collision(event):
-        other = event.other_actor.type_id
-        impulse = event.normal_impulse
-        intensity = (impulse.x**2 + impulse.y**2 + impulse.z**2) ** 0.5
-
-        msg = {
-            "frame": event.frame,
-            "other_actor": other,
-            "intensity": round(intensity, 2),
-            "location": {
-                "x": event.transform.location.x,
-                "y": event.transform.location.y,
-                "z": event.transform.location.z
-            }
-        }
-
-        print(f"[COLLISION] {msg}")
-        pothole_pub.put(json.dumps(msg))   # Publish to Zenoh
-
-    sensor.listen(on_collision)
-    return sensor
-
-
 def attach_imu_sensor(world, vehicle):
     blueprint = world.get_blueprint_library().find('sensor.other.imu')
     sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
 
     def on_imu(event):
+        ts = time.time()
         msg = {
-            "accel": [round(event.accelerometer.x, 3),
-                      round(event.accelerometer.y, 3),
-                      round(event.accelerometer.z, 3)],
-            "gyro": [round(event.gyroscope.x, 3),
-                     round(event.gyroscope.y, 3),
-                     round(event.gyroscope.z, 3)],
-            "compass": round(event.compass, 3)
+            "ts": ts,
+            "src": "carla",
+            "hz": 100,  # adjust if your IMU runs at different rate
+            "acc": {
+                "x": round(event.accelerometer.x, 3),
+                "y": round(event.accelerometer.y, 3),
+                "z": round(event.accelerometer.z, 3)
+            }
         }
-
+        imu_pub.put(json.dumps(msg))
         print(f"[IMU] {msg}")
-        imu_pub.put(json.dumps(msg))   # Publish to Zenoh
 
     sensor.listen(on_imu)
     return sensor
+
+# ==============================================================================
+# -- Pose publisher ------------------------------------------------------------
+# ==============================================================================
+def publish_pose(vehicle):
+    transform = vehicle.get_transform()
+    velocity = vehicle.get_velocity()
+    ts = time.time()
+
+    speed = (velocity.x**2 + velocity.y**2 + velocity.z**2) ** 0.5
+    yaw_rad = transform.rotation.yaw * 3.14159265 / 180.0  # deg → rad
+
+    msg = {
+        "ts": ts,
+        "x": round(transform.location.x, 2),
+        "y": round(transform.location.y, 2),
+        "yaw": round(yaw_rad, 3),
+        "speed_mps": round(speed, 2)
+    }
+    pose_pub.put(json.dumps(msg))
+    print(f"[POSE] {msg}")
 
 # ==============================================================================
 # -- Main autopilot + pothole routine ------------------------------------------
 # ==============================================================================
 def run_auto_mode(args):
     client = carla.Client(args.host, args.port)
-    client.set_timeout(2000.0)
+    client.set_timeout(10.0)
     world = client.get_world()
     bp_lib = world.get_blueprint_library()
+
+    # Enable synchronous mode for consistent ticks
+    settings = world.get_settings()
+    settings.synchronous_mode = True
+    settings.fixed_delta_seconds = 0.05  # 20 Hz
+    world.apply_settings(settings)
 
     # Spawn vehicle
     spawn_point = random.choice(world.get_map().get_spawn_points())
@@ -151,16 +151,15 @@ def run_auto_mode(args):
     ))
 
     # Attach sensors
-    collision_sensor = attach_collision_sensor(world, vehicle)
     imu_sensor = attach_imu_sensor(world, vehicle)
 
-    # Spawn potholes ahead
+    # Spawn potholes
     potholes = []
     for i in range(5):
         loc = carla.Location(
             x=spawn_point.location.x + (i+1)*10.0,
             y=spawn_point.location.y,
-            z=spawn_point.location.z - 0.2   # sink below road surface
+            z=spawn_point.location.z + 0.05   # slightly above road
         )
         pothole = spawn_pothole(world, bp_lib, loc)
         if pothole:
@@ -171,16 +170,24 @@ def run_auto_mode(args):
     vehicle.set_autopilot(True, traffic_manager.get_port())
 
     print("🚗 Running autopilot for 20 seconds...")
-    time.sleep(20)
+
+    for _ in range(int(20 / settings.fixed_delta_seconds)):
+        world.tick()
+        publish_pose(vehicle)
 
     # Cleanup
     print("🧹 Cleaning up actors...")
-    collision_sensor.destroy()
     imu_sensor.destroy()
     vehicle.destroy()
-    session.close()
     for p in potholes:
         p.destroy()
+
+    session.close()
+
+    # Restore async mode
+    settings.synchronous_mode = False
+    settings.fixed_delta_seconds = None
+    world.apply_settings(settings)
 
     print("✅ Done.")
 
