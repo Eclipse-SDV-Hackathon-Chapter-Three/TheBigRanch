@@ -2,13 +2,16 @@ name: Python CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]       
   pull_request:
-    branches: [ "main" ]
+    branches: [ "**" ]  
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      ENABLE_COVERAGE: false   # set to "true" to enable coverage + upload
 
     steps:
       - name: Checkout repository
@@ -25,10 +28,16 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Run tests with coverage
-        run: pytest --cov=. --cov-report xml
+      - name: Run tests (with or without coverage)
+        run: |
+          if [ "${ENABLE_COVERAGE}" = "true" ]; then
+            pytest --cov=. --cov-report xml
+          else
+            pytest
+          fi
 
       - name: Upload coverage to Codecov
+        if: env.ENABLE_COVERAGE == 'true'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
