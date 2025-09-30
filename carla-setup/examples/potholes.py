@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
 """
-Unified CARLA control script.
+Potholes CARLA Source.
 
-Modes:
-  --mode manual   : Start manual keyboard control (with Zenoh, HUD, sensors).
-  --mode auto     : Spawn a vehicle + potholes, put vehicle on autopilot, run 20s.
+- Spawns ego vehicle + potholes.
+- Attaches collision + IMU sensors.
+- Publishes events and raw data to Zenoh.
 
-Usage:
-  python3 carla_control.py --mode manual
-  python3 carla_control.py --mode auto
+Zenoh topics:
+  - vehicle/imu/raw
+  - detect/pothole/event
 """
 
 import argparse
@@ -19,10 +19,12 @@ import signal
 import sys
 import time
 import numpy.random as random
+import zenoh
+import json
+
 # ==============================================================================
 # -- find carla module ---------------------------------------------------------
 # ==============================================================================
-
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -31,7 +33,6 @@ try:
 except IndexError:
     pass
 
-# Add PythonAPI for release mode
 try:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + '/carla')
 except IndexError:
@@ -40,37 +41,41 @@ except IndexError:
 import carla
 
 # ==============================================================================
-# -- Import your manual control classes ----------------------------------------
+# -- Zenoh Init ----------------------------------------------------------------
 # ==============================================================================
-# here you would import World, KeyboardControl, HUD, etc. from your existing script
-# to keep this file shorter, assume you `from manual_control import game_loop`
-# where `game_loop(args)` is your existing function.
-
-# For now, stub:
-# def game_loop(args):
-#     print(">>> Running manual control (stub). Replace with your existing code.")
-#     time.sleep(5)
+session = zenoh.open(zenoh.Config())
+imu_pub = session.declare_publisher("vehicle/imu/raw")
+pothole_pub = session.declare_publisher("detect/pothole/event")
 
 # ==============================================================================
 # -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
-
 def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
-    """Spawn a pothole by sinking a cube below the ground surface"""
+    # Spawn a cube prop for physics bump
     cube_bp = bp_lib.find("static.prop.cube")
     cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
+
     if pothole:
         pothole.set_simulate_physics(False)
         print(f"Spawned pothole at {location}")
-    return pothole
 
+        # Draw debug outline (half-size extents!)
+        world.debug.draw_box(
+            carla.BoundingBox(location,
+                              carla.Vector3D(scale[0]/2, scale[1]/2, scale[2]/2)),
+            rotation=carla.Rotation(),
+            life_time=0.0,
+            thickness=0.1,
+            color=carla.Color(255, 0, 0)
+        )
+
+    return pothole
 
 # ==============================================================================
 # -- Sensors -------------------------------------------------------------------
 # ==============================================================================
-
 def attach_collision_sensor(world, vehicle):
     blueprint = world.get_blueprint_library().find('sensor.other.collision')
     sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
@@ -79,7 +84,20 @@ def attach_collision_sensor(world, vehicle):
         other = event.other_actor.type_id
         impulse = event.normal_impulse
         intensity = (impulse.x**2 + impulse.y**2 + impulse.z**2) ** 0.5
-        print(f"[COLLISION] with {other} | intensity={intensity:.2f}")
+
+        msg = {
+            "frame": event.frame,
+            "other_actor": other,
+            "intensity": round(intensity, 2),
+            "location": {
+                "x": event.transform.location.x,
+                "y": event.transform.location.y,
+                "z": event.transform.location.z
+            }
+        }
+
+        print(f"[COLLISION] {msg}")
+        pothole_pub.put(json.dumps(msg))   # Publish to Zenoh
 
     sensor.listen(on_collision)
     return sensor
@@ -90,22 +108,28 @@ def attach_imu_sensor(world, vehicle):
     sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
 
     def on_imu(event):
-        accel = event.accelerometer
-        gyro = event.gyroscope
-        print(f"[IMU] accel=({accel.x:.2f},{accel.y:.2f},{accel.z:.2f}) "
-              f"gyro=({gyro.x:.2f},{gyro.y:.2f},{gyro.z:.2f})")
+        msg = {
+            "accel": [round(event.accelerometer.x, 3),
+                      round(event.accelerometer.y, 3),
+                      round(event.accelerometer.z, 3)],
+            "gyro": [round(event.gyroscope.x, 3),
+                     round(event.gyroscope.y, 3),
+                     round(event.gyroscope.z, 3)],
+            "compass": round(event.compass, 3)
+        }
+
+        print(f"[IMU] {msg}")
+        imu_pub.put(json.dumps(msg))   # Publish to Zenoh
 
     sensor.listen(on_imu)
     return sensor
 
-
 # ==============================================================================
 # -- Main autopilot + pothole routine ------------------------------------------
 # ==============================================================================
-
-def run_auto_mode():
-    client = carla.Client("localhost", 2000)
-    client.set_timeout(10.0)
+def run_auto_mode(args):
+    client = carla.Client(args.host, args.port)
+    client.set_timeout(2000.0)
     world = client.get_world()
     bp_lib = world.get_blueprint_library()
 
@@ -143,7 +167,8 @@ def run_auto_mode():
             potholes.append(pothole)
 
     # Start autopilot
-    vehicle.set_autopilot(True)
+    traffic_manager = client.get_trafficmanager()
+    vehicle.set_autopilot(True, traffic_manager.get_port())
 
     print("🚗 Running autopilot for 20 seconds...")
     time.sleep(20)
@@ -153,6 +178,7 @@ def run_auto_mode():
     collision_sensor.destroy()
     imu_sensor.destroy()
     vehicle.destroy()
+    session.close()
     for p in potholes:
         p.destroy()
 
@@ -161,16 +187,9 @@ def run_auto_mode():
 # ==============================================================================
 # -- main() --------------------------------------------------------------------
 # ==============================================================================
-
 def main():
-    run_auto_mode()
     argparser = argparse.ArgumentParser(
         description='CARLA Manual Control Client')
-    argparser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        dest='debug',
-        help='print debug information')
     argparser.add_argument(
         '--host',
         metavar='H',
@@ -182,9 +201,10 @@ def main():
         default=2000,
         type=int,
         help='TCP port to listen to (default: 2000)')
-    # ensure clean exit
+    args = argparser.parse_args()
+    run_auto_mode(args)
     os.kill(os.getpid(), signal.SIGTERM)
-
 
 if __name__ == "__main__":
     main()
+
