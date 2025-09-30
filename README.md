@@ -11,6 +11,7 @@
 
 ## Team Members
 | Name                  | GitHub Handle  | Role(s)   |
+|-----------------------|----------------|-----------|  
 | Bruno de Sousa        | inuterall      | Developer |
 | Rodrigo Oliveira      | Rodrigo-Ol     | Developer |
 | Catarina Ferreira     | catarinaferrei | Developer |
