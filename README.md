@@ -32,12 +32,13 @@
 
 ### Planning & Tracking
 *How do you plan and track progress?*
+Use github issues to create tickets, provide an estimated deadline and assign resources.
 
 ### Quality Assurance
 *How do you ensure quality (e.g., testing, documentation, code reviews)?*
 
 ## Communication
-*How does your team communicate?*
+We communicate openly, giving everyone the freedom to share their ideas and raise their points. We also occasionally use Slack to share resources and links.
 
 ## Decision Making
-*How are decisions made in your team?*
+We make decisions by voting. If a team member disagrees or votes against, we take time to listen to their perspective, understand their reasoning, and then consider as a team whether their point makes sense.
