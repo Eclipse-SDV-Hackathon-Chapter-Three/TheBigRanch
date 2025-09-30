@@ -2,8 +2,8 @@
 
 # 1. Your Team at a Glance
 
-## Team Name / Tagline
-*TheBigRanch*
+## The Big Ranch / The Big Ranch Branch 
+
 
 ![TheBigRanch Team](image2.jpg)
 
