@@ -27,12 +27,7 @@ jobs:
 
       - name: Run tests (with or without coverage)
         run: |
-          if [ "${ENABLE_COVERAGE}" = "true" ]; then
-            pytest tests --cov=. --cov-report xml
-          else
-            pytest tests
-          fi
-
+          pytest tests --cov=. --cov-report xml
 
       - name: Upload coverage to Codecov
         if: ${{ env.ENABLE_COVERAGE == 'true' }}
