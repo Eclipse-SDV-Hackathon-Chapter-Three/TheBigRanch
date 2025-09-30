@@ -18,7 +18,7 @@
 ## Challenge
 *Which challenge have you decided to compete for?*
 
-*We have chosen to do the SDV lab challenge.*
+We have chosen to do the **SDV lab challenge**.
 
 ## Core Idea
 *What is your rough solution idea?*
