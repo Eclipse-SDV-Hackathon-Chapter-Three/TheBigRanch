@@ -31,7 +31,6 @@
 *Brief overview of your development process.*
 
 ### Planning & Tracking
-*How do you plan and track progress?*
 Use github issues to create tickets, provide an estimated deadline and assign resources.
 
 ### Quality Assurance
