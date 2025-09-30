@@ -17,6 +17,7 @@
 
 ## Challenge
 *Which challenge have you decided to compete for?*
+We have chosen to do the SDV lab challenge.
 
 ## Core Idea
 *What is your rough solution idea?*
@@ -34,7 +35,7 @@
 Use github issues to create tickets, provide an estimated deadline and assign resources.
 
 ### Quality Assurance
-*How do you ensure quality (e.g., testing, documentation, code reviews)?*
+*We will have a pipeline which will include code quality tools. If possible, we will also implement some automated tests for fixed inputs*
 
 ## Communication
 We communicate openly, giving everyone the freedom to share their ideas and raise their points. We also occasionally use Slack to share resources and links.
