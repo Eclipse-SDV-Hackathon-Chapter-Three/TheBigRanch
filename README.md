@@ -17,6 +17,7 @@
 
 ## Challenge
 *Which challenge have you decided to compete for?*
+
 *We have chosen to do the SDV lab challenge.*
 
 ## Core Idea
