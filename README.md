@@ -3,18 +3,18 @@
 # 1. Your Team at a Glance
 
 ## Team Name / Tagline
-*Brief catchy tagline or team name*
+*TheBigRanch*
 
 *create a sheet of paper with your team name on the desk.*
 
 *Feel free to include a picture representing your team*
 
 ## Team Members
-| Name | GitHub Handle | Role(s) |
-|-------|---------------|---------|
-|       |               |         |
-|       |               |         |
-|       |               |         |
+| Name                  | GitHub Handle  | Role(s)   |
+| Bruno de Sousa        | inuterall      | Developer |
+| Rodrigo Oliveira      | Rodrigo-Ol     | Developer |
+| Catarina Ferreira     | catarinaferrei | Developer |
+| Guilherme Barros      | guifreiremag   | Developer |
 
 ## Challenge
 *Which challenge have you decided to compete for?*
