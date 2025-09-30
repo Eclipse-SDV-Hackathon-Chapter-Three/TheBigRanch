@@ -19,7 +19,6 @@ import signal
 import sys
 import time
 import numpy.random as random
-
 # ==============================================================================
 # -- find carla module ---------------------------------------------------------
 # ==============================================================================
@@ -118,16 +117,24 @@ def run_auto_mode():
 # ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="CARLA unified control")
-    parser.add_argument("--mode", choices=["manual", "auto"], default="manual",
-                        help="Choose manual (keyboard) or auto (autopilot)")
-    args = parser.parse_args()
-
-    if args.mode == "manual":
-        game_loop(args)   # your existing manual control loop
-    elif args.mode == "auto":
-        run_auto_mode()
-
+    argparser = argparse.ArgumentParser(
+        description='CARLA Manual Control Client')
+    argparser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        dest='debug',
+        help='print debug information')
+    argparser.add_argument(
+        '--host',
+        metavar='H',
+        default='127.0.0.1',
+        help='IP of the host server (default: 127.0.0.1)')
+    argparser.add_argument(
+        '-p', '--port',
+        metavar='P',
+        default=2000,
+        type=int,
+        help='TCP port to listen to (default: 2000)')
     # ensure clean exit
     os.kill(os.getpid(), signal.SIGTERM)
 
