@@ -23,7 +23,7 @@ We have chosen to do the **SDV lab challenge**.
 ## Core Idea
 *What is your rough solution idea?*
 
-*Sketch something that helps understand e.g. mermaid chart*
+![Mermaid chart](image1.jpg)
 
 ---
 
