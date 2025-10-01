@@ -1,0 +1,6 @@
+pip~=21.2.4
+attrs~=25.3.0
+wheel~=0.37.0
+numpy~=2.0.2
+setuptools~=58.0.4
+eclipse-zenoh>=0.11.0
