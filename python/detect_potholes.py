@@ -26,6 +26,7 @@ CONFIG = {
 }
 G = 9.80665  # m/s²
 
+
 @dataclass
 class Pose:
     timestamp: float
@@ -34,6 +35,7 @@ class Pose:
     z: float
     heading: float
     speed: float
+
 
 @dataclass
 class IMU:
@@ -45,6 +47,7 @@ class IMU:
     gy: float
     gz: float
 
+
 # -----------------------------------
 #  Publisher Abstractions
 # -----------------------------------
@@ -52,9 +55,11 @@ class Publisher:
     async def publish(self, topic: str, message: Dict[str, Any]):
         raise NotImplementedError
 
+
 class PrintPublisher(Publisher):
     async def publish(self, topic: str, message: Dict[str, Any]):
         print(f"[PUBLISH] topic={topic} message={message}")
+
 
 class ZenohPublisher(Publisher):
     def __init__(self, session: zenoh.Session):
@@ -64,6 +69,7 @@ class ZenohPublisher(Publisher):
         data = json.dumps(message).encode("utf-8")
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: self.session.put(topic, data))
+
 
 # -----------------------------------
 #  Detector Service
@@ -104,7 +110,6 @@ class DetectorService:
 
         if (np.any(np.abs(jerk) > self.cfg["jerk_threshold_g"]) or
                 np.any(np.abs(az_g) > self.cfg["z_accel_threshold_g"])):
-
             peak_g = float(np.max(np.abs(jerk)))
             severity = self._classify_severity(peak_g)
             metrics = {
@@ -141,7 +146,6 @@ class DetectorService:
             cell = self._grid_cell(self.last_pose.x, self.last_pose.y)
             self.grid_counts[cell] += 1
 
-
     def _classify_severity(self, peak_g: float) -> str:
         for threshold, level in self.cfg["severity_map"]:
             if peak_g < threshold:
@@ -152,7 +156,8 @@ class DetectorService:
         cell_size = self.cfg["grid_cell_m"]
         return (int(math.floor(x / cell_size)), int(math.floor(y / cell_size)))
 
-    def _build_event(self, timestamp: float, vehicle_id: str, pose: Pose, severity: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_event(self, timestamp: float, vehicle_id: str, pose: Pose, severity: str, metrics: Dict[str, Any]) -> \
+    Dict[str, Any]:
         return {
             "event_id": str(uuid.uuid4()),
             "timestamp": float(timestamp),
@@ -161,6 +166,7 @@ class DetectorService:
             "severity": severity,
             "metrics": metrics,
         }
+
 
 # -----------------------------------
 #  Simulation Mode
@@ -195,37 +201,29 @@ async def simulate_streams(detector: DetectorService, duration_s: float = 10.0):
         await asyncio.sleep(1.0 / imu_hz)
         sim_t = time.time() - t0
 
+
 # -----------------------------------
 #  Zenoh Mode
 # -----------------------------------
-def start_subscriptions(session: zenoh.Session, detector: DetectorService, loop: asyncio.AbstractEventLoop):
-    def _decode(sample):
-        # zenoh-python can give you a payload with to_bytes(); handle both cases
-        try:
-            b = sample.payload.to_bytes() if hasattr(sample.payload, "to_bytes") else sample.payload
-            if isinstance(b, bytes):
-                return json.loads(b.decode("utf-8"))
-            return json.loads(str(b))
-        except Exception as e:
-            print("Decode error:", e)
-            return None
-
+def start_subscriptions(session: zenoh.Session, detector: DetectorService):
     def imu_listener(sample):
-        msg = _decode(sample)
-        if msg is None:
-            return
-        # schedule the coroutine on the main event loop
-        asyncio.run_coroutine_threadsafe(detector.handle_imu(msg), loop)
+        try:
+            msg = json.loads(sample.payload.to_bytes())
+            loop = asyncio.get_running_loop()
+            loop.create_task(detector.handle_imu(msg))
+        except Exception as e:
+            print("IMU handler error:", e)
 
     def pose_listener(sample):
-        msg = _decode(sample)
-        if msg is None:
-            return
-        asyncio.run_coroutine_threadsafe(detector.handle_pose(msg), loop)
+        try:
+            msg = json.loads(sample.payload.to_bytes())
+            loop = asyncio.get_running_loop()
+            loop.create_task(detector.handle_pose(msg))
+        except Exception as e:
+            print("Pose handler error:", e)
 
     session.declare_subscriber("vehicle/imu/raw", imu_listener)
     session.declare_subscriber("vehicle/pose", pose_listener)
-
 
 
 # -----------------------------------
@@ -243,34 +241,19 @@ async def main():
         detector = DetectorService(publisher)
         await simulate_streams(detector, duration_s=8.0)
 
-
     elif args.mode == "zenoh":
-
         print("🔗 Running in ZENOH mode (listening to CARLA)")
-
         conf = zenoh.Config()
-
         session = zenoh.open(conf)
-
         publisher = ZenohPublisher(session)
-
         detector = DetectorService(publisher)
-
-        loop = asyncio.get_running_loop()  # <-- capture the loop here
-
-        start_subscriptions(session, detector, loop)
-
+        start_subscriptions(session, detector)
         try:
-
             while True:
                 await asyncio.sleep(1)
-
         except KeyboardInterrupt:
-
             print("Shutting down...")
-
         finally:
-
             session.close()
 
 
