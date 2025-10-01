@@ -1,6 +1,8 @@
 import asyncio
 import json
 import argparse
+import threading
+
 import zenoh
 
 from collections import deque, defaultdict
@@ -25,6 +27,9 @@ CONFIG = {
     "vehicle_id": "sim-vehicle-01",
 }
 G = 9.80665  # m/s²
+
+main_loop = asyncio.new_event_loop()
+threading.Thread(target=main_loop.run_forever, daemon=True).start()
 
 
 @dataclass
@@ -206,10 +211,11 @@ async def simulate_streams(detector: DetectorService, duration_s: float = 10.0):
 #  Zenoh Mode
 # -----------------------------------
 def start_subscriptions(session: zenoh.Session, detector: DetectorService):
-    async def imu_listener(sample):
+    def imu_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            await detector.handle_imu(msg)
+            # thread-safe submission to the loop running in the other thread
+            asyncio.run_coroutine_threadsafe(detector.handle_imu(msg), main_loop)
         except Exception as e:
             print("IMU handler error:", e)
 
