@@ -3,7 +3,7 @@ import carla
 import random
 import time
 
-def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
+def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.08)):
     """
     Spawn a thin cube collider to simulate a pothole.
     """
@@ -13,7 +13,11 @@ def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
     if pothole:
-        pothole.set_simulate_physics(True)
+        try:
+            pothole.set_simulate_physics(True)
+            pothole.set_enable_gravity(True)
+        except:
+            pass
         print(f"Spawned pothole at {location}")
     else:
         print("Failed to spawn pothole")
@@ -58,7 +62,7 @@ def main():
 
     # Put vehicle on autopilot
     vehicle.set_autopilot(True)
-
+    print("Simulation running for 20 seconds..")
     # Let simulation run
     time.sleep(20)
 
