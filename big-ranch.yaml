@@ -1,25 +1,21 @@
 apiVersion: v0.1
 workloads:
-  carla-listener:
-    runtime: podman
-    agent: agent_A
-    restartPolicy: NEVER
-    runtimeConfig: |
-      image: docker.io/python:3.7-slim
-      commandArgs:
-        - python
-        - /app/carla-connection.py
-      volumes:
-        - /home/app/python/carla-connection.py:/app/carla-connection.py:ro
+#  carla-listener:
+#    runtime: podman
+#    agent: agent_A
+#    restartPolicy: NEVER
+#    runtimeConfig: |
+#      image: docker.io/python:3.7-slim
+#      commandArgs:
+#        - python
+#        - /home/app/python/carla-connection.py
+#      volumes:
+#        - /home/app/python/carla-connection.py:/app/carla-connection.py:ro
 
   server-listener:
     runtime: podman
     agent: agent_A
-    restartPolicy: NEVER
+    restartPolicy: ALWAYS
     runtimeConfig: |
       image: docker.io/python:3.7-slim
-      commandArgs:
-        - python
-        - /app/listener.py
-      volumes:
-        - /home/app/python/listener.py:/app/listener.py:ro
+      commandArgs: ["python3.7", "python/listener.py"]

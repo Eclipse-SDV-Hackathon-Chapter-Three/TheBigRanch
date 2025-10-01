@@ -1,7 +1,9 @@
 import sys
 import time
 import math
+import asyncio
 import zenoh
+
 
 def position_listener(sample):
     print()
@@ -10,7 +12,7 @@ def imu_listener(sample):
     # apply rule to check severity of pothole
     print()
 
-def main():
+async def main():
     # Open Zenoh session
     print("[Subscriber] Opening Zenoh session...")
     session = zenoh.open({})
@@ -35,4 +37,5 @@ def main():
         session.close()
 
 if __name__ == '__main__':
-   main()
+   loop = asyncio.get_event_loop()
+   loop.run_until_complete(main())
