@@ -98,9 +98,15 @@ class DetectorService:
 
     async def handle_imu(self, msg: Dict[str, Any]):
         imu = IMU(**msg)
+        print("########## HANDLE IMU ############")
         print(imu)
         self.imu_buffer.append(imu)
         if len(self.imu_buffer) >= 3:
+            print("#######################################")
+            print("#######################################")
+            print("ATTEMTPING DETECTION")
+            print("#######################################")
+            print("#######################################")
             await self._attempt_detection()
 
     async def _attempt_detection(self):
@@ -132,10 +138,10 @@ class DetectorService:
                 metrics=metrics
             )
 
-            # ✅ Publish pothole event
+            # Publish pothole event
             await self.pub.publish("vehicle/events/pothole", event)
 
-            # ✅ Publish HMI alert
+            # Publish HMI alert
             alert = {
                 "type": "pothole",
                 "severity": severity,
