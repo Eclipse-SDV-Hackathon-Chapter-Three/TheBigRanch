@@ -50,9 +50,9 @@ imu_pub = session.declare_publisher("vehicle/imu/raw")
 # ==============================================================================
 # -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
-def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
+def spawn_pothole(world, bp_lib, location):
     cube_bp = bp_lib.find("static.prop.cube")
-    cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
+    #Dont set scale because its unsupported
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
 
@@ -63,7 +63,7 @@ def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
         # Debug outline
         world.debug.draw_box(
             carla.BoundingBox(location,
-                              carla.Vector3D(scale[0]/2, scale[1]/2, scale[2]/2)),
+                              carla.Vector3D(1.0, 1.0, 0.5)), #Example box size
             rotation=carla.Rotation(),
             life_time=0.0,
             thickness=0.1,
@@ -106,7 +106,7 @@ def publish_pose(vehicle):
     ts = time.time()
 
     speed = (velocity.x**2 + velocity.y**2 + velocity.z**2) ** 0.5
-    yaw_rad = transform.rotation.yaw * 3.14159265 / 180.0  # deg → rad
+    yaw_rad = transform.rotation.yaw * 3.14159265 / 180.0  # deg to rad
 
     msg = {
         "ts": ts,
@@ -138,10 +138,10 @@ def run_auto_mode(args):
     vehicle_bp = random.choice(bp_lib.filter("vehicle.*"))
     vehicle = world.try_spawn_actor(vehicle_bp, spawn_point)
     if not vehicle:
-        print("❌ Failed to spawn vehicle")
+        print("Failed to spawn vehicle")
         return
 
-    print(f"✅ Spawned vehicle {vehicle.type_id} at {spawn_point.location}")
+    print(f"Spawned vehicle {vehicle.type_id} at {spawn_point.location}")
 
     # Camera above vehicle
     spectator = world.get_spectator()
@@ -153,30 +153,28 @@ def run_auto_mode(args):
     # Attach sensors
     imu_sensor = attach_imu_sensor(world, vehicle)
 
-    # Spawn potholes
+    # Get the forward vector of the spawn point (direction car faces)
+    forward_vector = spawn_point.get_forward_vector()
+
+    #Spawn potholes in front of the vehicle using the orward vector
     potholes = []
     for i in range(5):
-        loc = carla.Location(
-            x=spawn_point.location.x + (i+1)*10.0,
-            y=spawn_point.location.y,
-            z=spawn_point.location.z + 0.05   # slightly above road
-        )
-        pothole = spawn_pothole(world, bp_lib, loc)
-        if pothole:
-            potholes.append(pothole)
+        dist = (i + 1) * 10.0 #10m, 20m, 30m...
+        loc = spawn_point.location + forward_vector * dist * dist
+        loc.z += 0.05 #slighty above the road surfaces
 
     # Start autopilot
     traffic_manager = client.get_trafficmanager()
     vehicle.set_autopilot(True, traffic_manager.get_port())
 
-    print("🚗 Running autopilot for 20 seconds...")
+    print("Running autopilot for 20 seconds...")
 
     for _ in range(int(20 / settings.fixed_delta_seconds)):
         world.tick()
         publish_pose(vehicle)
 
     # Cleanup
-    print("🧹 Cleaning up actors...")
+    print("Cleaning up actors...")
     imu_sensor.destroy()
     vehicle.destroy()
     for p in potholes:
@@ -189,7 +187,7 @@ def run_auto_mode(args):
     settings.fixed_delta_seconds = None
     world.apply_settings(settings)
 
-    print("✅ Done.")
+    print("Done")
 
 # ==============================================================================
 # -- main() --------------------------------------------------------------------
@@ -208,7 +206,7 @@ def main():
         default=2000,
         type=int,
         help='TCP port to listen to (default: 2000)')
-  argparser.add_argument(
+    argparser.add_argument(
         '--router',
         default='127.0.0.1',
         type=str,
