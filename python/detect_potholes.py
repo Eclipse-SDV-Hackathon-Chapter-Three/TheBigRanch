@@ -92,11 +92,13 @@ class DetectorService:
 
     async def handle_pose(self, msg: Dict[str, Any]):
         pose = Pose(**msg)
+        print(pose)
         self.last_pose = pose
         await self._attempt_detection()
 
     async def handle_imu(self, msg: Dict[str, Any]):
         imu = IMU(**msg)
+        print(imu)
         self.imu_buffer.append(imu)
         if len(self.imu_buffer) >= 3:
             await self._attempt_detection()
