@@ -51,23 +51,58 @@ imu_pub = session.declare_publisher("vehicle/imu/raw")
 # -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
 def spawn_pothole(world, bp_lib, location):
-    cube_bp = bp_lib.find("static.prop.cube")
-    # Don't set scale because it's unsupported
+    """
+    Spawns a 'bump' using a static prop. Tries several common props and
+    picks the first one available in this CARLA build.
+    """
+    # Try these in order; adjust or add more as needed for your build
+    candidate_filters = [
+        "static.prop.*barrier*",
+        "static.prop.*speed*",
+        "static.prop.*cone*",
+        "static.prop.*box*",
+        "static.*cube*",
+        "static.prop.*construction*",
+        "static.prop.*fence*",
+        "static.prop.*rail*",
+    ]
+
+    cube_bp = None
+    for pattern in candidate_filters:
+        matches = bp_lib.filter(pattern)
+        if matches:
+            cube_bp = matches[0]  # pick the first match
+            print(f"[POTHOLE] Using prop blueprint: {cube_bp.id}")
+            break
+
+    if cube_bp is None:
+        # Helpful dump for you to find something that exists
+        available = [bp.id for bp in bp_lib if bp.id.startswith("static.")]
+        raise IndexError(
+            "No suitable static prop found. "
+            "Try one of these patterns on your build, e.g., bp_lib.filter('static.prop.*barrier*'). "
+            f"Sample static blueprints: {available[:25]} ..."
+        )
+
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
 
     if pothole:
-        pothole.set_simulate_physics(False)
+        # Keep it kinematic so it acts like a solid obstacle without falling
+        try:
+            pothole.set_simulate_physics(False)
+        except Exception:
+            pass
+
         print(f"Spawned pothole at {location}")
 
-        # Debug outline
+        # Debug outline (visible indefinitely)
         world.debug.draw_box(
-            carla.BoundingBox(location,
-                              carla.Vector3D(1.0, 1.0, 0.5)),  # Example box size
+            carla.BoundingBox(location, carla.Vector3D(1.0, 1.0, 0.5)),
             rotation=carla.Rotation(),
             life_time=0.0,
             thickness=0.1,
-            color=carla.Color(255, 0, 0)
+            color=carla.Color(255, 0, 0),
         )
 
     return pothole
