@@ -1,0 +1,7 @@
+streamlit>=1.34
+pydeck>=0.8
+pandas>=2.0
+zenoh>=0.11
+folium>=0.15
+streamlit-folium>=0.10
+pyproj>=3.7.2

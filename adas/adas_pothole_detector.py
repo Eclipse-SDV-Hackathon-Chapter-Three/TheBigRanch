@@ -17,11 +17,11 @@ ALERT_TOPIC = "hmi/alert"
 
 # --------- Tunables ----------
 ACC_Z_HP_ALPHA = 0.9
-ACC_SPIKE_THRESHOLD = 2.0
+ACC_SPIKE_THRESHOLD = 2.0      # g spike threshold
 MIN_SPEED_MPS = 4.0
 WINDOW_SEC = 0.5
-REFRACTORY_SEC = 1.5
-MERGE_DIST_M = 5.0
+REFRACTORY_SEC = 1.5           # min time between events
+MERGE_DIST_M = 5.0             # potholes within 5m = same
 SEVERITY_HIGH = 3.5
 
 # --------- State ----------
@@ -31,14 +31,13 @@ last_event_ts = 0.0
 last_event_xy = None
 lock = threading.Lock()
 
-
+# --------- Utils ----------
 def zbytes_to_json(sample_payload):
     text = sample_payload.to_string()
     obj = json.loads(text)
     if isinstance(obj, str):
         obj = json.loads(obj)
     return obj
-
 
 class HighPass:
     def __init__(self, alpha: float):
@@ -56,19 +55,45 @@ class HighPass:
         self.last_hp = hp
         return hp
 
-
 hp_z = HighPass(ACC_Z_HP_ALPHA)
 
+def haversine(lat1, lon1, lat2, lon2):
+    """Great-circle distance in meters."""
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
+def should_merge(prev_xy, new_xy) -> bool:
+    if prev_xy is None or new_xy is None:
+        return False
+    plat, plon = prev_xy
+    nlat, nlon = new_xy
+    return haversine(plat, plon, nlat, nlon) <= MERGE_DIST_M
+
+# --------- Callbacks ----------
 def pose_cb(sample):
+    """Convert Carla x/y (meters) to lat/lon once."""
     global latest_pose
     try:
         msg = zbytes_to_json(sample.payload)
 
-        # Convert CARLA x,y (meters) → lat/lon once
+        # Anchor: Graça / Alfama in Lisbon
         base_lat, base_lon = 38.711046, -9.138637
-        lat = base_lat + float(msg.get("y", 0.0)) * 0.00001
-        lon = base_lon + float(msg.get("x", 0.0)) * 0.00001
+
+        # Conversion factors: meters → degrees at Lisbon latitude
+        M_PER_DEG_LAT = 1.0 / 111111.0      # ~0.000009°
+        M_PER_DEG_LON = 1.0 / 88000.0       # ~0.000011° at 38.7°N
+
+        x_m = float(msg.get("x", 0.0))  # east-west (meters)
+        y_m = float(msg.get("y", 0.0))  # north-south (meters)
+
+        # Apply proper scaling
+        lat = base_lat + y_m * M_PER_DEG_LAT
+        lon = base_lon + x_m * M_PER_DEG_LON
 
         msg_converted = {
             "ts": msg.get("ts", time.time()),
@@ -83,52 +108,33 @@ def pose_cb(sample):
     except Exception as e:
         print("POSE parse error:", e)
 
-
-
 def imu_cb(sample):
     try:
         msg = zbytes_to_json(sample.payload)
         ts = msg.get("ts", time.time())
         acc = msg.get("acc", {})
         az = float(acc.get("z", 0.0))
-        ax = float(acc.get("x", 0.0))
-        ay = float(acc.get("y", 0.0))
 
         az_hp = hp_z.step(az)
 
         with lock:
-            imu_buf.append((ts, az_hp, ax, ay, az))
+            imu_buf.append((ts, az_hp))
             cut = ts - WINDOW_SEC
             while imu_buf and imu_buf[0][0] < cut:
                 imu_buf.popleft()
     except Exception as e:
         print("IMU parse error:", e)
 
-
 def current_speed_and_pos() -> Optional[Dict]:
     with lock:
         if not latest_pose:
             return None
-        return {
-            "speed_mps": float(latest_pose.get("speed_mps", 0.0)),
-            "lat": latest_pose.get("lat"),
-            "lon": latest_pose.get("lon"),
-        }
-
+        return latest_pose
 
 def severity_from_spike(spike: float) -> str:
     return "HIGH" if abs(spike) >= SEVERITY_HIGH else "LOW"
 
-
-def should_merge(prev_xy, new_xy) -> bool:
-    if prev_xy is None:
-        return False
-    (px, py) = prev_xy
-    (nx, ny) = new_xy
-    dist = math.hypot(nx - px, ny - py)
-    return dist <= MERGE_DIST_M
-
-
+# --------- Detection Loop ----------# --------- Detection Loop ----------
 def detection_loop(session):
     global last_event_ts, last_event_xy
 
@@ -155,42 +161,15 @@ def detection_loop(session):
             max_spike = max(spikes) if spikes else 0.0
             ts_latest = imu_buf[-1][0]
 
+        # only trigger if above threshold
         if max_spike < ACC_SPIKE_THRESHOLD:
             continue
 
-        if (ts_latest - last_event_ts) < REFRACTORY_SEC:
-            # use last lat/lon for merging instead of x,y
-            new_xy = (lat, lon) if lat is not None and lon is not None else None
-            if new_xy and not should_merge(last_event_xy, new_xy):
-                pass
-            else:
-                continue
-
-        sev = severity_from_spike(max_spike)
-        event = {
-            "ts": ts_latest,
-            "lat": lat,
-            "lon": lon,
-            "severity": sev,
-            "score": round(min(0.99, max_spike / (SEVERITY_HIGH * 1.5)), 2),
-        }
-
-        pothole_pub.put(json.dumps(event))
-
-        alert = {
-            "ts": ts_latest,
-            "level": "warning" if sev == "LOW" else "danger",
-            "title": "Road anomaly",
-            "msg": f"Pothole ({sev}) ahead",
-        }
-        alert_pub.put(json.dumps(alert))
-
-        print("🚧 Emitted:", event)
-
-        last_event_ts = ts_latest
-        last_event_xy = (lat, lon)
+        # refractory & merge check
+        if (ts_latest - last_event_ts) < REFRACTORY_SEC and sh
 
 
+# --------- Main ----------
 def main():
     zconf = zenoh.Config()
     with zenoh.open(zconf) as session:
@@ -206,7 +185,6 @@ def main():
                 time.sleep(1.0)
         except KeyboardInterrupt:
             print("Shutting down ADAS node…")
-
 
 if __name__ == "__main__":
     main()

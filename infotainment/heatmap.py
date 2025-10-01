@@ -2,7 +2,6 @@
 import json
 import time
 import sqlite3
-import math
 import streamlit as st
 import pydeck as pdk
 import zenoh
@@ -10,10 +9,10 @@ from streamlit_autorefresh import st_autorefresh
 
 DB_PATH = "adas.db"
 
-# Use the SAME anchor & scale as your ADAS node
+# Same anchor & scale as the ADAS node
 ANCHOR_LAT = 38.711046
 ANCHOR_LON = -9.138637
-METERS_TO_DEGREES = 1e-5   # same 0.00001 you used in ADAS
+METERS_TO_DEGREES = 1e-5
 
 # -----------------
 # DB Setup
@@ -23,7 +22,6 @@ def init_db():
     cur = conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL;")
 
-    # Pose stores lat/lon now
     cur.execute("""CREATE TABLE IF NOT EXISTS pose (
         ts REAL, lat REAL, lon REAL, yaw REAL, speed_mps REAL
     )""")
@@ -37,7 +35,7 @@ def init_db():
         ts REAL, level TEXT, title TEXT, msg TEXT
     )""")
 
-    # Clear tables once per Streamlit session (nice for dev)
+    # Clear once per Streamlit session (handy in dev)
     if "db_cleared" not in st.session_state:
         for table in ["pose", "imu", "potholes", "alerts"]:
             cur.execute(f"DELETE FROM {table}")
@@ -70,15 +68,24 @@ def init_zenoh():
         if "ERROR" in msg:
             return
 
-        # Robust: if publisher ever sends lat/lon, use them; otherwise convert x/y (meters)
-        if "lat" in msg and "lon" in msg:
-            lat = float(msg.get("lat", 0.0))
-            lon = float(msg.get("lon", 0.0))
-        else:
+        lat = msg.get("lat")
+        lon = msg.get("lon")
+
+        if lat is None or lon is None:
+            # fallback to convert x/y from CARLA world coords
             x_m = float(msg.get("x", 0.0))
             y_m = float(msg.get("y", 0.0))
-            lat = ANCHOR_LAT + y_m * METERS_TO_DEGREES
-            lon = ANCHOR_LON + x_m * METERS_TO_DEGREES
+
+            base_lat, base_lon = 38.711046, -9.138637
+            M_PER_DEG_LAT = 1.0 / 111111.0
+            M_PER_DEG_LON = 1.0 / 88000.0
+
+            lat = base_lat + y_m * M_PER_DEG_LAT
+            lon = base_lon + x_m * M_PER_DEG_LON
+
+        # ensure numeric
+        lat = float(lat)
+        lon = float(lon)
 
         c = sqlite3.connect(DB_PATH)
         c.execute(
@@ -93,6 +100,7 @@ def init_zenoh():
         )
         c.commit()
         c.close()
+
 
     def imu_cb(sample):
         msg = safe_json_decode(sample.payload)
@@ -116,20 +124,24 @@ def init_zenoh():
         msg = safe_json_decode(sample.payload)
         if "ERROR" in msg:
             return
-        if msg.get("lat") is None or msg.get("lon") is None:
-            return
+
+        # potholes from ADAS are already in lat/lon → trust directly
+        if "lat" not in msg or "lon" not in msg:
+            return  # skip invalid pothole messages
+
         c = sqlite3.connect(DB_PATH)
         c.execute(
             "INSERT INTO potholes (ts, lat, lon, severity) VALUES (?, ?, ?, ?)",
             (
                 float(msg.get("ts", time.time())),
-                float(msg["lat"]),
-                float(msg["lon"]),
+                float(msg["lat"]),   # no conversion
+                float(msg["lon"]),   # no conversion
                 str(msg.get("severity", "LOW")),
             ),
         )
         c.commit()
         c.close()
+
 
     def alert_cb(sample):
         msg = safe_json_decode(sample.payload)
@@ -161,10 +173,7 @@ def init_zenoh():
 st.set_page_config(page_title="ADAS Heatmap (DB)", layout="wide")
 st.title("🚗 ADAS Infotainment Dashboard with DB")
 
-# start zenoh subscribers
 init_zenoh()
-
-# auto-refresh every 2s
 st_autorefresh(interval=2000, key="refresh_db_view")
 
 col1, col2 = st.columns([1, 2])
@@ -207,7 +216,7 @@ with col1:
 with col2:
     st.subheader("🔥 Vehicle Path + Potholes")
 
-    # Pose path (already lat/lon in DB)
+    # Path points (already lat/lon)
     pose_rows = conn.execute(
         "SELECT lat, lon, speed_mps FROM pose ORDER BY ts DESC LIMIT 200"
     ).fetchall()
@@ -217,6 +226,7 @@ with col2:
     segments = []
     for i in range(len(path_points) - 1):
         a, b = path_points[i], path_points[i + 1]
+        # simple speed-based color
         red = int(min(255, a["speed"] * 10))
         green = 255 - red
         segments.append({
@@ -225,7 +235,7 @@ with col2:
             "color": [red, green, 0]
         })
 
-    # Car icon at latest pose
+    # Latest car position (safe fallback to anchor)
     if path_points:
         car_lat, car_lon = path_points[-1]["lat"], path_points[-1]["lon"]
     else:
@@ -240,38 +250,58 @@ with col2:
         weight = 1 if severity == "LOW" else 3
         pothole_data.append({"lon": float(lon), "lat": float(lat), "weight": weight})
 
-    view_state = pdk.ViewState(latitude=car_lat, longitude=car_lon, zoom=15)
+    # ✅ Fixed center on Lisbon anchor (static map)
+    view_state = pdk.ViewState(
+        latitude=ANCHOR_LAT,
+        longitude=ANCHOR_LON,
+        zoom=14   # zoom out a bit so you always see car + potholes
+    )
 
     layers = []
     if segments:
-        layers.append(pdk.Layer("LineLayer", data=segments,
-                                get_source_position="sourcePosition",
-                                get_target_position="targetPosition",
-                                get_color="color", get_width=3))
+        layers.append(pdk.Layer(
+            "LineLayer",
+            data=segments,
+            get_source_position="sourcePosition",
+            get_target_position="targetPosition",
+            get_color="color",
+            get_width=3
+        ))
+
     car_icon = {
         "url": "https://cdn-icons-png.flaticon.com/512/61/61168.png",
         "width": 512,
         "height": 512,
         "anchorY": 512
     }
-    layers.append(pdk.Layer("IconLayer",
-                            data=[{"lat": car_lat, "lon": car_lon, "icon": car_icon}],
-                            get_icon="icon", get_size=4, size_scale=6,
-                            get_position="[lon, lat]"))
-    if pothole_data:
-        layers.append(pdk.Layer("HeatmapLayer",
-                                data=pothole_data,
-                                get_position="[lon, lat]",
-                                get_weight="weight",
-                                radiusPixels=40))
+    layers.append(pdk.Layer(
+        "IconLayer",
+        data=[{"lat": car_lat, "lon": car_lon, "icon": car_icon}],
+        get_icon="icon",
+        get_size=4,
+        size_scale=6,
+        get_position="[lon, lat]"
+    ))
 
-    deck = pdk.Deck(layers=layers, initial_view_state=view_state,
-                    map_style="light",
-                    tooltip={"text": "Pothole\nLat: {lat}\nLon: {lon}"})
+    if pothole_data:
+        layers.append(pdk.Layer(
+            "HeatmapLayer",
+            data=pothole_data,
+            get_position="[lon, lat]",
+            get_weight="weight",
+            radiusPixels=40
+        ))
+
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_style="light",
+        tooltip={"text": "Pothole\nLat: {lat}\nLon: {lon}"}
+    )
     st.pydeck_chart(deck, use_container_width=True)
 
 # -----------------
-# Debug section
+# Debug
 # -----------------
 st.subheader("🗄️ Debug DB contents")
 with st.expander("Show counts"):
