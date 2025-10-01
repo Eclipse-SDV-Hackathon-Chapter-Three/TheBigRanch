@@ -1,6 +1,7 @@
-pip~=21.2.4
-attrs~=25.3.0
-wheel~=0.37.0
-numpy~=2.0.2
-setuptools~=58.0.4
-eclipse-zenoh>=0.11.0
+streamlit>=1.34
+pydeck>=0.8
+pandas>=2.0
+zenoh>=0.11
+folium>=0.15
+streamlit-folium>=0.10
+pyproj>=3.7.2
