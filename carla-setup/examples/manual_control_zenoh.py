@@ -187,7 +187,29 @@ def get_actor_blueprints(world, filter, generation):
         print("   Warning! Actor Generation is not valid. No actor will be spawned.")
         return []
 
+# ==============================================================================
+# -- Pothole helper ------------------------------------------------------------
+# ==============================================================================
+def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
+    cube_bp = bp_lib.find("static.prop.cube")
+    cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
+    transform = carla.Transform(location, carla.Rotation())
+    pothole = world.try_spawn_actor(cube_bp, transform)
 
+    if pothole:
+        pothole.set_simulate_physics(False)
+        print(f"Spawned pothole at {location}")
+
+        # Debug outline
+        world.debug.draw_box(
+            carla.BoundingBox(location,
+                              carla.Vector3D(scale[0]/2, scale[1]/2, scale[2]/2)),
+            rotation=carla.Rotation(),
+            life_time=0.0,
+            thickness=0.1,
+            color=carla.Color(255, 0, 0)
+        )
+    return pothole
 # ==============================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
@@ -198,6 +220,7 @@ class World(object):
         self.world = carla_world
         self.sync = args.sync
         self.actor_role_name = args.rolename
+        self.potholes = []
         try:
             self.map = self.world.get_map()
         except RuntimeError as error:
@@ -286,6 +309,7 @@ class World(object):
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
             self.show_vehicle_telemetry = False
             self.modify_vehicle_physics(self.player)
+        
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
@@ -294,6 +318,36 @@ class World(object):
         self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
         self.camera_manager.transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
+                # --- Spawn potholes ahead of the ego vehicle ---
+        try:
+            bp_lib = self.world.get_blueprint_library()
+            ego_tf = self.player.get_transform()
+            ego_loc = ego_tf.location
+            fwd = ego_tf.get_forward_vector()
+
+            # Clear any previous potholes (when restarting)
+            for p in getattr(self, "potholes", []):
+                try:
+                    if p and p.is_alive:
+                        p.destroy()
+                except Exception:
+                    pass
+            self.potholes = []
+
+            # Drop 5 potholes along the forward direction ~8 m apart
+            for i in range(5):
+                dist = (i + 1) * 8.0
+                loc = carla.Location(
+                    x=ego_loc.x + fwd.x * dist,
+                    y=ego_loc.y + fwd.y * dist,
+                    z=ego_loc.z + 0.05  # slightly above road to avoid z-fighting
+                )
+                pothole = spawn_pothole(self.world, bp_lib, loc)
+                if pothole:
+                    self.potholes.append(pothole)
+        except Exception as e:
+            print(f"⚠️ Pothole spawn failed: {e}")
+
         actor_type = get_actor_display_name(self.player)
         self.hud.notification(actor_type)
 
@@ -367,6 +421,13 @@ class World(object):
                 sensor.destroy()
         if self.player is not None:
             self.player.destroy()
+                # Destroy potholes
+        try:
+            for p in getattr(self, "potholes", []):
+                if p and p.is_alive:
+                    p.destroy()
+        except Exception:
+            pass
 
 
 # ==============================================================================
