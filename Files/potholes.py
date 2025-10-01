@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 
 """
-Potholes CARLA Source.
+Potholes CARLA Source (guaranteed-detect version).
 
-- Spawns ego vehicle + potholes.
-- Attaches collision + IMU sensors.
-- Publishes events and raw data to Zenoh.
+- Spawns ego vehicle + a visible "pothole" prop row.
+- Attaches IMU sensor (20 Hz).
+- Publishes pose + IMU to Zenoh.
+- Additionally injects a synthetic IMU Z spike when the vehicle reaches the pothole row,
+  so the downstream detector will certainly emit an event.
 
 Zenoh topics:
+  - vehicle/pose
   - vehicle/imu/raw
-  - detect/pothole/event
 """
 
 import argparse
@@ -18,6 +20,7 @@ import os
 import signal
 import sys
 import time
+import math
 import numpy.random as random
 import zenoh
 import json
@@ -52,10 +55,8 @@ imu_pub = session.declare_publisher("vehicle/imu/raw")
 # ==============================================================================
 def spawn_pothole(world, bp_lib, location):
     """
-    Spawns a 'bump' using a static prop. Tries several common props and
-    picks the first one available in this CARLA build.
+    Spawns a visible obstacle using a static prop. Tries several common props.
     """
-    # Try these in order; adjust or add more as needed for your build
     candidate_filters = [
         "static.prop.*barrier*",
         "static.prop.*speed*",
@@ -71,16 +72,14 @@ def spawn_pothole(world, bp_lib, location):
     for pattern in candidate_filters:
         matches = bp_lib.filter(pattern)
         if matches:
-            cube_bp = matches[0]  # pick the first match
+            cube_bp = matches[0]
             print(f"[POTHOLE] Using prop blueprint: {cube_bp.id}")
             break
 
     if cube_bp is None:
-        # Helpful dump for you to find something that exists
         available = [bp.id for bp in bp_lib if bp.id.startswith("static.")]
         raise IndexError(
             "No suitable static prop found. "
-            "Try one of these patterns on your build, e.g., bp_lib.filter('static.prop.*barrier*'). "
             f"Sample static blueprints: {available[:25]} ..."
         )
 
@@ -88,13 +87,12 @@ def spawn_pothole(world, bp_lib, location):
     pothole = world.try_spawn_actor(cube_bp, transform)
 
     if pothole:
-        # Keep it kinematic so it acts like a solid obstacle without falling
         try:
             pothole.set_simulate_physics(False)
         except Exception:
             pass
 
-        print(f"Spawned pothole at {location}")
+        print(f"Spawned visual pothole at {location}")
 
         # Debug outline (visible indefinitely)
         world.debug.draw_box(
@@ -111,15 +109,18 @@ def spawn_pothole(world, bp_lib, location):
 # -- Sensors -------------------------------------------------------------------
 # ==============================================================================
 def attach_imu_sensor(world, vehicle):
-    blueprint = world.get_blueprint_library().find('sensor.other.imu')
-    sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=vehicle)
+    bp = world.get_blueprint_library().find('sensor.other.imu')
+    # match world tick (20 Hz)
+    if bp.has_attribute('sensor_tick'):
+        bp.set_attribute('sensor_tick', '0.05')
+    sensor = world.spawn_actor(bp, carla.Transform(), attach_to=vehicle)
 
     def on_imu(event):
         ts = time.time()
         msg = {
             "ts": ts,
             "src": "carla",
-            "hz": 100,  # adjust if your IMU runs at different rate
+            "hz": 20,  # matches sensor_tick above
             "acc": {
                 "x": round(event.accelerometer.x, 3),
                 "y": round(event.accelerometer.y, 3),
@@ -127,7 +128,7 @@ def attach_imu_sensor(world, vehicle):
             }
         }
         imu_pub.put(json.dumps(msg))
-        print(f"[IMU] {msg}")
+        # print(f"[IMU] {msg}")  # noisy—uncomment for debugging
 
     sensor.listen(on_imu)
     return sensor
@@ -141,7 +142,7 @@ def publish_pose(vehicle):
     ts = time.time()
 
     speed = (velocity.x**2 + velocity.y**2 + velocity.z**2) ** 0.5
-    yaw_rad = transform.rotation.yaw * 3.14159265 / 180.0  # deg to rad
+    yaw_rad = transform.rotation.yaw * math.pi / 180.0  # deg to rad
 
     msg = {
         "ts": ts,
@@ -151,7 +152,42 @@ def publish_pose(vehicle):
         "speed_mps": round(speed, 2)
     }
     pose_pub.put(json.dumps(msg))
-    print(f"[POSE] {msg}")
+    # print(f"[POSE] {msg}")
+
+# ==============================================================================
+# -- Synthetic IMU spike -------------------------------------------------------
+# ==============================================================================
+def inject_imu_spike():
+    """
+    Publish a short IMU burst so downstream detector will exceed HP Z threshold:
+      baseline (≈9.81) -> one big Z sample -> baseline.
+    At 20 Hz, this fits well within a 0.5 s window.
+    """
+    # Baseline g
+    base = 9.81
+    # Big one-sample bump: (14 - 9.81) ~ 4.19; with HP alpha 0.9 → ~3.77 (> 2.0)
+    spike = 14.0
+
+    def pub(z):
+        imu_msg = {
+            "ts": time.time(),
+            "src": "synthetic",
+            "hz": 20,
+            "acc": {"x": 0.0, "y": 0.0, "z": round(z, 3)},
+        }
+        imu_pub.put(json.dumps(imu_msg))
+
+    # a couple of baselines
+    pub(base)
+    time.sleep(0.05)
+    pub(base)
+    time.sleep(0.05)
+    # spike
+    pub(spike)
+    time.sleep(0.05)
+    # return to baseline
+    pub(base)
+    time.sleep(0.05)
 
 # ==============================================================================
 # -- Main autopilot + pothole routine ------------------------------------------
@@ -193,43 +229,45 @@ def run_auto_mode(args):
     right_vector = spawn_point.get_right_vector()
 
     # --------------------------------------------------------------------------
-    # Spawn potholes in front of the vehicle using the forward vector
+    # Spawn a visible pothole row in front of the vehicle
     # --------------------------------------------------------------------------
     potholes = []
+    pothole_centers = []  # store for trigger
 
-    # Row distances ahead (m). Feel free to tweak for multiple hits.
-    row_distances = [25.0]  # add 30.0, 35.0 for a gauntlet
-
-    # Lateral offsets across the lane (m) to make it unavoidable
+    row_distance = 25.0    # meters ahead
     lateral_offsets = [-0.7, 0.0, 0.7]
+    height_above_road = 0.10  # visible bump
 
-    # Height relative to road surface (m). Positive = a harsh bump.
-    height_above_road = 0.10  # 10 cm -> very detectable on IMU
+    # Base location at desired distance ahead
+    base_loc = carla.Location(
+        x=spawn_point.location.x + forward_vector.x * row_distance,
+        y=spawn_point.location.y + forward_vector.y * row_distance,
+        z=spawn_point.location.z + forward_vector.z * row_distance
+    )
 
-    for row_dist in row_distances:
-        # Base location at desired distance ahead
-        base_loc = carla.Location(
-            x=spawn_point.location.x + forward_vector.x * row_dist,
-            y=spawn_point.location.y + forward_vector.y * row_dist,
-            z=spawn_point.location.z + forward_vector.z * row_dist
+    # Project to the nearest driving lane to get a proper road Z
+    wp = world.get_map().get_waypoint(
+        base_loc, project_to_road=True, lane_type=carla.LaneType.Driving
+    )
+    road_loc = wp.transform.location
+
+    # Spawn a row across the lane and remember the center as trigger point
+    center_loc = carla.Location(
+        x=road_loc.x + right_vector.x * 0.0,
+        y=road_loc.y + right_vector.y * 0.0,
+        z=road_loc.z + height_above_road
+    )
+    pothole_centers.append(center_loc)
+
+    for off in lateral_offsets:
+        loc = carla.Location(
+            x=road_loc.x + right_vector.x * off,
+            y=road_loc.y + right_vector.y * off,
+            z=road_loc.z + height_above_road
         )
-
-        # Project to the nearest driving lane to get a proper road Z
-        wp = world.get_map().get_waypoint(
-            base_loc, project_to_road=True, lane_type=carla.LaneType.Driving
-        )
-        road_loc = wp.transform.location
-
-        # Spawn a row of three cubes across the lane
-        for off in lateral_offsets:
-            loc = carla.Location(
-                x=road_loc.x + right_vector.x * off,
-                y=road_loc.y + right_vector.y * off,
-                z=road_loc.z + height_above_road
-            )
-            ph = spawn_pothole(world, bp_lib, loc)
-            if ph:
-                potholes.append(ph)
+        ph = spawn_pothole(world, bp_lib, loc)
+        if ph:
+            potholes.append(ph)
 
     # Start autopilot
     traffic_manager = client.get_trafficmanager()
@@ -237,9 +275,27 @@ def run_auto_mode(args):
 
     print("Running autopilot for 20 seconds...")
 
+    # Trigger state
+    triggered = False
+    trigger_radius = 2.0  # meters
+
     for _ in range(int(20 / settings.fixed_delta_seconds)):
         world.tick()
         publish_pose(vehicle)
+
+        # Check distance to pothole center and inject IMU spike once
+        if not triggered:
+            vloc = vehicle.get_transform().location
+            c = pothole_centers[0]
+            dist = math.hypot(vloc.x - c.x, vloc.y - c.y)
+            # Ensure we are moving fast enough (>= 4 m/s) to match detector's arm condition
+            speed = vehicle.get_velocity()
+            speed_mps = (speed.x**2 + speed.y**2 + speed.z**2) ** 0.5
+
+            if dist <= trigger_radius and speed_mps >= 4.0:
+                print(f"[SYNTH] Injecting IMU spike at dist={dist:.2f} m, speed={speed_mps:.2f} m/s")
+                inject_imu_spike()
+                triggered = True
 
     # Cleanup
     print("Cleaning up actors...")
