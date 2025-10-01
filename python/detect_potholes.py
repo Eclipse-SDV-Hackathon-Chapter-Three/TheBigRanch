@@ -206,21 +206,19 @@ async def simulate_streams(detector: DetectorService, duration_s: float = 10.0):
 #  Zenoh Mode
 # -----------------------------------
 def start_subscriptions(session: zenoh.Session, detector: DetectorService):
-    def imu_listener(sample):
+    async def imu_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            loop = asyncio.get_running_loop()
-            loop.create_task(detector.handle_imu(msg))
+            await detector.handle_imu(msg)
         except Exception as e:
             print("IMU handler error:", e)
 
-    def pose_listener(sample):
+    async def pose_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            loop = asyncio.get_running_loop()
-            loop.create_task(detector.handle_pose(msg))
+            await detector.handle_pose(msg)
         except Exception as e:
-            print("Pose handler error:", e)
+            print("POSE handler error:", e)
 
     session.declare_subscriber("vehicle/imu/raw", imu_listener)
     session.declare_subscriber("vehicle/pose", pose_listener)
@@ -236,13 +234,13 @@ async def main():
     args = parser.parse_args()
 
     if args.mode == "sim":
-        print("🚗 Running in SIMULATION mode")
+        print("Running in SIMULATION mode")
         publisher = PrintPublisher()
         detector = DetectorService(publisher)
         await simulate_streams(detector, duration_s=8.0)
 
     elif args.mode == "zenoh":
-        print("🔗 Running in ZENOH mode (listening to CARLA)")
+        print("Running in ZENOH mode (listening to CARLA)")
         conf = zenoh.Config()
         session = zenoh.open(conf)
         publisher = ZenohPublisher(session)
