@@ -64,10 +64,25 @@ def pose_cb(sample):
     global latest_pose
     try:
         msg = zbytes_to_json(sample.payload)
+
+        # Convert CARLA x,y (meters) → lat/lon once
+        base_lat, base_lon = 38.711046, -9.138637
+        lat = base_lat + float(msg.get("y", 0.0)) * 0.00001
+        lon = base_lon + float(msg.get("x", 0.0)) * 0.00001
+
+        msg_converted = {
+            "ts": msg.get("ts", time.time()),
+            "lat": lat,
+            "lon": lon,
+            "yaw": msg.get("yaw", 0.0),
+            "speed_mps": msg.get("speed_mps", 0.0)
+        }
+
         with lock:
-            latest_pose = msg
+            latest_pose = msg_converted
     except Exception as e:
         print("POSE parse error:", e)
+
 
 
 def imu_cb(sample):
@@ -96,8 +111,8 @@ def current_speed_and_pos() -> Optional[Dict]:
             return None
         return {
             "speed_mps": float(latest_pose.get("speed_mps", 0.0)),
-            "x": latest_pose.get("x"),
-            "y": latest_pose.get("y"),
+            "lat": latest_pose.get("lat"),
+            "lon": latest_pose.get("lon"),
         }
 
 
@@ -128,6 +143,7 @@ def detection_loop(session):
         if not pose:
             continue
 
+        lat, lon = pose["lat"], pose["lon"]
         speed = pose["speed_mps"]
         if speed < MIN_SPEED_MPS:
             continue
@@ -143,16 +159,12 @@ def detection_loop(session):
             continue
 
         if (ts_latest - last_event_ts) < REFRACTORY_SEC:
-            new_xy = (float(pose["x"]), float(pose["y"])) if pose["x"] is not None else None
+            # use last lat/lon for merging instead of x,y
+            new_xy = (lat, lon) if lat is not None and lon is not None else None
             if new_xy and not should_merge(last_event_xy, new_xy):
                 pass
             else:
                 continue
-
-        # --- Projection from CARLA meters to Lisbon lat/lon ---
-        base_lat, base_lon = 38.7169, -9.1390
-        lat = base_lat + float(pose["y"]) * 0.00001
-        lon = base_lon + float(pose["x"]) * 0.00001
 
         sev = severity_from_spike(max_spike)
         event = {
@@ -176,7 +188,7 @@ def detection_loop(session):
         print("🚧 Emitted:", event)
 
         last_event_ts = ts_latest
-        last_event_xy = (float(pose["x"]), float(pose["y"])) if pose["x"] is not None else None
+        last_event_xy = (lat, lon)
 
 
 def main():

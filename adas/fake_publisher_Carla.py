@@ -1,4 +1,3 @@
-# fake_publisher.py
 import time
 import json
 import math
