@@ -202,14 +202,16 @@ def start_subscriptions(session: zenoh.Session, detector: DetectorService):
     def imu_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            asyncio.create_task(detector.handle_imu(msg))
+            loop = asyncio.get_running_loop()
+            loop.create_task(detector.handle_imu(msg))
         except Exception as e:
             print("IMU handler error:", e)
 
     def pose_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            asyncio.create_task(detector.handle_pose(msg))
+            loop = asyncio.get_running_loop()
+            loop.create_task(detector.handle_pose(msg))
         except Exception as e:
             print("Pose handler error:", e)
 
