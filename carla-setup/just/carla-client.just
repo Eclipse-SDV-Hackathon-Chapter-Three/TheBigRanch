@@ -79,22 +79,19 @@ run-manual-sensors router="127.0.0.1" host="127.0.0.1" port="2000": (_check_host
     --rolename '{{ vehicle_role }}' \
     --router {{ router }}
 
+
 [group('Carla Client')]
 [doc('Run manual control with Sensors')]
-run-potholes-sensors router="127.0.0.1" host="127.0.0.1" port="2000": (_check_host client_host)
+run-potholes router="127.0.0.1" host="127.0.0.1" port="2000": (_check_host client_host)
   # Copy scripts
   @cp -vf {{ bridge_examples }}/{{ zenoh_pothole }} {{ python_examples }}
-  @cp -vf {{ bridge_examples }}/{{ example_manual_sensors }} {{ python_examples }}
+  @cp -vf {{ bridge_examples }}/{{ example_manual }} {{ python_examples }}
   @cp -vf {{ bridge_examples }}/{{ zenoh_vehicle }} {{ python_examples }}
   # Run client
   python3 {{ python_examples }}/{{ zenoh_pothole }} \
     --host {{ host }} \
     --port {{ port }} \
-    --res {{ client_width }}x{{ client_height }} \
-    --filter "{{ vehicle_bp }}" \
-    --rolename '{{ vehicle_role }}' \
     --router {{ router }}
-
 
 [group('Carla Client')]
 [doc('Uninstall CARLA Python API')]

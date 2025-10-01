@@ -191,7 +191,7 @@ def get_actor_blueprints(world, filter, generation):
 # -- Pothole helper ------------------------------------------------------------
 # ==============================================================================
 def spawn_pothole(world, bp_lib, location, scale=(2.0, 2.0, 0.2)):
-    cube_bp = bp_lib.find("static.prop.cube")
+    cube_bp = bp_lib.find("static.prop.streetbarrier")
     cube_bp.set_attribute("scale", f"{scale[0]},{scale[1]},{scale[2]}")
     transform = carla.Transform(location, carla.Rotation())
     pothole = world.try_spawn_actor(cube_bp, transform)
