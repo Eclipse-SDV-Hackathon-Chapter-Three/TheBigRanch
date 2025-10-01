@@ -219,10 +219,11 @@ def start_subscriptions(session: zenoh.Session, detector: DetectorService):
         except Exception as e:
             print("IMU handler error:", e)
 
-    async def pose_listener(sample):
+    def pose_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            await detector.handle_pose(msg)
+            # thread-safe submission to the loop running in the other thread
+            asyncio.run_coroutine_threadsafe(detector.handle_pose(msg), main_loop)
         except Exception as e:
             print("POSE handler error:", e)
 
