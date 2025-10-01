@@ -18,7 +18,7 @@ ALERT_TOPIC = "hmi/alert"
 # --------- Tunables ----------
 ACC_Z_HP_ALPHA = 0.9
 ACC_SPIKE_THRESHOLD = 2.0
-MIN_SPEED_MPS = 4.0
+MIN_SPEED_MPS = 0.0
 WINDOW_SEC = 0.5
 REFRACTORY_SEC = 1.5
 MERGE_DIST_M = 5.0
@@ -162,6 +162,10 @@ def detection_loop(session):
             "severity": sev,
             "score": round(min(0.99, max_spike / (SEVERITY_HIGH * 1.5)), 2),
         }
+
+        print(f"[DBG] speed={pose['speed_mps'] if pose else None} "
+              f"max_hp={max([abs(s[1]) for s in imu_buf], default=0):.2f} "
+              f"buf={len(imu_buf)}")
 
         pothole_pub.put(json.dumps(event))
 
