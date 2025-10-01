@@ -198,23 +198,34 @@ async def simulate_streams(detector: DetectorService, duration_s: float = 10.0):
 # -----------------------------------
 #  Zenoh Mode
 # -----------------------------------
-def start_subscriptions(session: zenoh.Session, detector: DetectorService, loop):
-    def imu_listener(sample):
+def start_subscriptions(session: zenoh.Session, detector: DetectorService, loop: asyncio.AbstractEventLoop):
+    def _decode(sample):
+        # zenoh-python can give you a payload with to_bytes(); handle both cases
         try:
-            msg = json.loads(sample.payload.to_bytes())
-            asyncio.run_coroutine_threadsafe(detector.handle_imu(msg), loop)
+            b = sample.payload.to_bytes() if hasattr(sample.payload, "to_bytes") else sample.payload
+            if isinstance(b, bytes):
+                return json.loads(b.decode("utf-8"))
+            return json.loads(str(b))
         except Exception as e:
-            print("IMU handler error:", e)
+            print("Decode error:", e)
+            return None
+
+    def imu_listener(sample):
+        msg = _decode(sample)
+        if msg is None:
+            return
+        # schedule the coroutine on the main event loop
+        asyncio.run_coroutine_threadsafe(detector.handle_imu(msg), loop)
 
     def pose_listener(sample):
-        try:
-            msg = json.loads(sample.payload.to_bytes())
-            asyncio.run_coroutine_threadsafe(detector.handle_pose(msg), loop)
-        except Exception as e:
-            print("Pose handler error:", e)
+        msg = _decode(sample)
+        if msg is None:
+            return
+        asyncio.run_coroutine_threadsafe(detector.handle_pose(msg), loop)
 
     session.declare_subscriber("vehicle/imu/raw", imu_listener)
     session.declare_subscriber("vehicle/pose", pose_listener)
+
 
 
 # -----------------------------------
@@ -232,20 +243,36 @@ async def main():
         detector = DetectorService(publisher)
         await simulate_streams(detector, duration_s=8.0)
 
+
     elif args.mode == "zenoh":
+
         print("🔗 Running in ZENOH mode (listening to CARLA)")
+
         conf = zenoh.Config()
+
         session = zenoh.open(conf)
+
         publisher = ZenohPublisher(session)
+
         detector = DetectorService(publisher)
-        start_subscriptions(session, detector)
+
+        loop = asyncio.get_running_loop()  # <-- capture the loop here
+
+        start_subscriptions(session, detector, loop)
+
         try:
+
             while True:
                 await asyncio.sleep(1)
+
         except KeyboardInterrupt:
+
             print("Shutting down...")
+
         finally:
+
             session.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
