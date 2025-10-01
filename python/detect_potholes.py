@@ -198,25 +198,24 @@ async def simulate_streams(detector: DetectorService, duration_s: float = 10.0):
 # -----------------------------------
 #  Zenoh Mode
 # -----------------------------------
-def start_subscriptions(session: zenoh.Session, detector: DetectorService):
+def start_subscriptions(session: zenoh.Session, detector: DetectorService, loop):
     def imu_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            loop = asyncio.get_running_loop()
-            loop.create_task(detector.handle_imu(msg))
+            asyncio.run_coroutine_threadsafe(detector.handle_imu(msg), loop)
         except Exception as e:
             print("IMU handler error:", e)
 
     def pose_listener(sample):
         try:
             msg = json.loads(sample.payload.to_bytes())
-            loop = asyncio.get_running_loop()
-            loop.create_task(detector.handle_pose(msg))
+            asyncio.run_coroutine_threadsafe(detector.handle_pose(msg), loop)
         except Exception as e:
             print("Pose handler error:", e)
 
     session.declare_subscriber("vehicle/imu/raw", imu_listener)
     session.declare_subscriber("vehicle/pose", pose_listener)
+
 
 # -----------------------------------
 #  Main
