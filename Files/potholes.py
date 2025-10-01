@@ -267,7 +267,8 @@ def run_auto_mode(args):
         )
         ph = spawn_pothole(world, bp_lib, loc)
         if ph:
-            potholes.append(ph)
+            bb = ph.bounding_box
+            world.debug.draw_box(bb, bb.rotation, life_time=0.0, thickness=0.1, color=carla.Color(0, 255, 0))
 
     # Start autopilot
     traffic_manager = client.get_trafficmanager()
