@@ -1,0 +1,7 @@
+certifi==2025.4.26
+cffi==1.17.1
+cryptography==44.0.3
+pycparser==2.22
+wheel==0.45.1
+carla==0.9.16
+eclipse-zenoh==1.5.1
