@@ -208,6 +208,11 @@ def main():
         default=2000,
         type=int,
         help='TCP port to listen to (default: 2000)')
+  argparser.add_argument(
+        '--router',
+        default='127.0.0.1',
+        type=str,
+        help='IP address of the Zenoh router (default: 127.0.0.1)')
     args = argparser.parse_args()
     run_auto_mode(args)
     os.kill(os.getpid(), signal.SIGTERM)
