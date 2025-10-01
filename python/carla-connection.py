@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 import math
@@ -17,6 +18,12 @@ def get_speed(velocity):
     return math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
 
 def main():
+    #--------- CONFIG ----------
+    POSE_TOPIC = 'vehicle/pose' #Vehicle Position info
+    IMU_TOPIC = 'vehicle/imu/raw' #Raw IMU
+    RATE_HZ = 20
+    ZENOH_CONNECT = {}
+    # -------------------------
     try:
         # Connect to CARLA server
         client = carla.Client("localhost", 2000)
@@ -34,28 +41,47 @@ def main():
         vehicle = vehicles[0]
         print(f"Tracking vehicle: ID {vehicle.id}, Type {vehicle.type_id}\n")
 
+        session = zenoh.open(ZENOH_CONNECT)
+        pub_pose = session.declare_publisher(POSE_TOPIC)
+        pub_imu = session.publish(IMU_TOPIC)
         # Poll info every 0.5 seconds
         while True:
-            session = zenoh.open({})
 
-            # vehicle position topic
-            vehicle_pose_topic = 'vehicle/pose'
-
-            # raw IMU info
-            vehicle_imu_raw_topic = 'vehicle/imu/raw'
+            t0 = time.time()
 
             transform = vehicle.get_transform()
             velocity = vehicle.get_velocity()
+            acc = vehicle.get_acceleration()
 
-            location = transform.location
-            rotation = transform.rotation
+            location, rotation = transform.location, transform.rotation
             speed = get_speed(velocity)
 
+            pose_msg = {
+                "ts": t0,
+                "x": location.x,
+                "y": location.y,
+                "yaw": math.radians(rotation.yaw), # CARLA gives in degrees
+                "speed": speed,
+            }
+
+            pub_pose.put(json.dumps(pose_msg).encode("utf-8"))
+
+            '----------IMU----------'
+            imu_msg = {
+                "ts": t0,
+                "src": "carla",
+                "hz": RATE_HZ,
+                "acc": {"x": acc.x, "y": acc.y, "z": acc.z}
+            }
+
+            pub_imu.put(json.dumps(imu_msg).encode("utf-8"))
+
+
             # Validate this if
-            if (rotation.yaw < -2.0):
-                # sends data to topics
-                session.put(vehicle_pose_topic, location)
-                session.put(vehicle_imu_raw_topic, rotation)
+           ## if (rotation.yaw < -2.0):
+           ##     # sends data to topics
+           ##     session.put(vehicle_pose_topic, location)
+           ##     session.put(vehicle_imu_raw_topic, rotation)
 
             print(f"Location: (X={location.x:.2f}, Y={location.y:.2f}, Z={location.z:.2f})")
             print(f"Rotation: (Pitch={rotation.pitch:.2f}, Yaw={rotation.yaw:.2f}, Roll={rotation.roll:.2f})")
