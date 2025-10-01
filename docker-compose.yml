@@ -13,6 +13,14 @@ services:
     networks:
       - zenoh-net
 
+  heatmap:
+    build: ./infotainment
+    container_name: heatmap
+    ports:
+      - 8501:8501
+    networks:
+      - zenoh-net
+
 networks:
   zenoh-net:
     driver: bridge
