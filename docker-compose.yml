@@ -1,21 +1,15 @@
 version: '3.9'
 
 services:
-  listener:
-    build: ./python
-    container_name: listener
-    networks:
-      - zenoh-net
-
   pothole-detector:
-    build: ./ankaios/aaos
-    container_name: app2
+    build: ./adas
+    container_name: pothole-detector
     networks:
       - zenoh-net
 
   carla:
-    build: ./app3
-    container_name: app3
+    build: ./carla-setup
+    container_name: fake-publisher-carla
     networks:
       - zenoh-net
 

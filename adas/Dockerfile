@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 # Enable pip pre-release installations
 RUN pip install --upgrade pip setuptools && \
-    pip install --pre zenoh
+    pip install --pre eclipse-zenoh
 
 WORKDIR /app
-COPY main.py .
+COPY adas_pothole_detector.py .
 
-CMD ["python", "main.py"]
+CMD ["python", "adas_pothole_detector.py"]
