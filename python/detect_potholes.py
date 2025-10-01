@@ -29,8 +29,10 @@ CONFIG = {
 G = 9.80665  # m/s²
 
 main_loop = asyncio.new_event_loop()
-threading.Thread(target=main_loop.run_forever, daemon=True).start()
+thread = threading.Thread(target=main_loop.run_forever, daemon=True)
+thread.start()
 
+print("Loop running?", main_loop.is_running(), "closed?", main_loop.is_closed())
 
 @dataclass
 class Pose:
